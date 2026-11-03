@@ -15,7 +15,7 @@ import {
   Animated,
   Easing,
   ActivityIndicator,
-  Dimensions,
+  useWindowDimensions,
   StatusBar,
   Image,
   Modal,
@@ -38,7 +38,7 @@ import {
   Inter_600SemiBold,
 } from '@expo-google-fonts/inter';
 
-import { colors, gradients, spacing, radius, shadow } from '../constants/theme';
+import { colors, gradients, spacing, radius, shadow, withAlpha } from '../constants/theme';
 import { login } from '../services/api';
 import {
   saveSession,
@@ -48,8 +48,7 @@ import {
   clearRememberedCredentials,
 } from '../services/storage';
 import { LoginScreenProps } from '../navigation/AppNavigator';
-
-const { width: SCREEN_W } = Dimensions.get('window');
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const LINKS = {
   website: 'https://imcbs.com/',
@@ -220,7 +219,7 @@ const CTAButton: React.FC<CTAButtonProps> = ({ label, onPress, loading, ready })
           {/* shimmer sweep (clipped in its own layer so the button shadow stays intact) */}
           <View
             pointerEvents="none"
-            style={{ ...StyleSheet.absoluteFillObject, borderRadius: radius.md, overflow: 'hidden' }}
+            style={{ ...StyleSheet.absoluteFill, borderRadius: radius.md, overflow: 'hidden' }}
           >
             <Animated.View
               style={{
@@ -235,7 +234,7 @@ const CTAButton: React.FC<CTAButtonProps> = ({ label, onPress, loading, ready })
               }}
             >
               <LinearGradient
-                colors={['rgba(255,255,255,0)', 'rgba(255,255,255,0.28)', 'rgba(255,255,255,0)']}
+                colors={[withAlpha(colors.white, 0), withAlpha(colors.white, 0.28), withAlpha(colors.white, 0)]}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 0 }}
                 style={StyleSheet.absoluteFill}
@@ -549,7 +548,7 @@ const SuccessReveal: React.FC<{ onDone: () => void }> = ({ onDone }) => {
           <MaterialCommunityIcons name="star-four-points" size={16} color={colors.orange} />
         </Animated.View>
         <Animated.View style={{ position: 'absolute', right: 2, top: 12, opacity: pop, transform: [{ scale: scalePop }] }}>
-          <MaterialCommunityIcons name="star-four-points" size={12} color="#FFFFFF" />
+          <MaterialCommunityIcons name="star-four-points" size={12} color={colors.white} />
         </Animated.View>
 
         {/* the lid */}
@@ -592,6 +591,11 @@ const SuccessReveal: React.FC<{ onDone: () => void }> = ({ onDone }) => {
 // Main screen
 // ---------------------------------------------------------------------------
 const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const isTabletLandscape = Math.min(windowWidth, windowHeight) >= 600 && windowWidth > windowHeight;
+  const insets = useSafeAreaInsets();
+  const decorationSize = Math.min(windowWidth, 680);
+  const logoWidth = isTabletLandscape ? Math.min(windowWidth - spacing.lg * 2, 280) : Math.min(windowWidth - spacing.lg * 2, 440);
   const [fontsLoaded] = useFonts({
     Fraunces_600SemiBold,
     Fraunces_700Bold,
@@ -706,15 +710,15 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
       <StatusBar barStyle="dark-content" />
 
       {/* soft ambient color — not a heavy hero block, just brand color breathing in the corners */}
-      <View style={[styles.blob, styles.blobMint]} />
-      <View style={[styles.blob, styles.blobOrange]} />
+      <View style={[styles.blob, styles.blobMint, { width: decorationSize * 0.9, height: decorationSize * 0.9, top: -decorationSize * 0.45, left: -decorationSize * 0.35 }]} />
+      <View style={[styles.blob, styles.blobOrange, { width: decorationSize * 0.7, height: decorationSize * 0.7, bottom: -decorationSize * 0.4, right: -decorationSize * 0.3 }]} />
 
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         <ScrollView
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + (isTabletLandscape ? 2 : 0), paddingBottom: insets.bottom + (isTabletLandscape ? spacing.sm : spacing.xl), maxWidth: 600, alignSelf: 'center', width: '100%' }]}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
@@ -731,24 +735,24 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
           >
             <Image
               source={require('../../assets/meloneBanner-whitebg.png')}
-              style={styles.logoBanner}
+              style={[styles.logoBanner, isTabletLandscape && styles.logoBannerCompact, { width: logoWidth, height: logoWidth * (isTabletLandscape ? 0.4 : 0.5) }]}
               resizeMode="contain"
             />
 
-            <Text style={styles.headline}>
+            <Text style={[styles.headline, isTabletLandscape && styles.headlineCompact]}>
               Welcome back to your{' '}
               <Text style={styles.headlineAccent}>kitchen.</Text>
             </Text>
-            <Text style={styles.subtitle}>
+            <Text style={[styles.subtitle, isTabletLandscape && styles.subtitleCompact]}>
               Sign in to manage orders & tables 
             </Text>
           </Animated.View>
 
-          <PeekingWaiter
+          {!isTabletLandscape && <PeekingWaiter
             covering={pwFocused}
             looking={textFocused}
             progress={Math.min(typingLen / 20, 1)}
-          />
+          />}
 
 
           {/* ---------- Form ---------- */}
@@ -913,18 +917,10 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   blobMint: {
-    width: SCREEN_W * 0.9,
-    height: SCREEN_W * 0.9,
-    top: -SCREEN_W * 0.45,
-    left: -SCREEN_W * 0.35,
-    backgroundColor: 'rgba(22,58,46,0.05)',
+    backgroundColor: withAlpha(colors.inkDeep, 0.05),
   },
   blobOrange: {
-    width: SCREEN_W * 0.7,
-    height: SCREEN_W * 0.7,
-    bottom: -SCREEN_W * 0.4,
-    right: -SCREEN_W * 0.3,
-    backgroundColor: 'rgba(242,167,27,0.07)',
+    backgroundColor: withAlpha(colors.orange, 0.07),
   },
   scrollContent: {
     flexGrow: 1,
@@ -933,16 +929,15 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.xl,
   },
 logoBanner: {
-  width: 340,
-  height: 170,
   alignSelf: 'center',
   marginTop: spacing.lg,
   marginBottom: -spacing.sm - 58,
-  shadowColor: '#161818',
+  shadowColor: colors.inkDarker,
   shadowOpacity: 0.12,
   shadowRadius: 10,
   shadowOffset: { width: 0, height: 4 },
 },
+  logoBannerCompact: { marginTop: spacing.xs, marginBottom: -spacing.md },
   badge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -973,6 +968,7 @@ logoBanner: {
     marginTop: spacing.md,
     maxWidth: 320,
   },
+  headlineCompact: { fontSize: 23, lineHeight: 28, marginTop: spacing.xs },
   headlineAccent: {
     fontFamily: 'Fraunces_600SemiBold_Italic',
     color: colors.orangeDeep,
@@ -985,7 +981,11 @@ logoBanner: {
     marginTop: spacing.sm,
     maxWidth: 300,
   },
+  subtitleCompact: { fontSize: 13, lineHeight: 18, marginTop: 2 },
  card: {
+  width: '100%',
+  maxWidth: 500,
+  alignSelf: 'center',
   backgroundColor: colors.surface,
   borderRadius: radius.lg,
   padding: spacing.xl,
@@ -1021,7 +1021,7 @@ logoBanner: {
   },
   modalBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(22,58,46,0.45)',
+    backgroundColor: withAlpha(colors.inkDeep, 0.45),
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: spacing.lg,
@@ -1038,7 +1038,7 @@ logoBanner: {
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: '#FDECEC',
+    backgroundColor: colors.errorBackground,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: spacing.md,
@@ -1198,7 +1198,7 @@ logoBanner: {
     height: 30,
     borderBottomLeftRadius: 4,
     borderBottomRightRadius: 4,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.white,
   },
   pwBowWing: {
     position: 'absolute',
@@ -1225,7 +1225,7 @@ logoBanner: {
     width: 7,
     height: 9,
     borderRadius: 4,
-    backgroundColor: '#EDB98E',
+    backgroundColor: colors.artSkinLight,
   },
   pwHead: {
     position: 'absolute',
@@ -1234,7 +1234,7 @@ logoBanner: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#F6CFA8',
+    backgroundColor: colors.artSkinHighlight,
   },
   pwBrow: {
     position: 'absolute',
@@ -1242,7 +1242,7 @@ logoBanner: {
     width: 8,
     height: 2.5,
     borderRadius: 1.5,
-    backgroundColor: '#5A3A28',
+    backgroundColor: colors.artDarkWarm,
   },
   pwEye: {
     position: 'absolute',
@@ -1250,7 +1250,7 @@ logoBanner: {
     width: 7,
     height: 9,
     borderRadius: 4,
-    backgroundColor: '#2A1B12',
+    backgroundColor: colors.artHair,
   },
   pwEyeShine: {
     position: 'absolute',
@@ -1259,7 +1259,7 @@ logoBanner: {
     width: 3,
     height: 3,
     borderRadius: 2,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.white,
   },
   pwNose: {
     position: 'absolute',
@@ -1268,7 +1268,7 @@ logoBanner: {
     width: 5,
     height: 4,
     borderRadius: 2.5,
-    backgroundColor: '#E7A97F',
+    backgroundColor: colors.artSkinShadow,
   },
   pwCheek: {
     position: 'absolute',
@@ -1276,7 +1276,7 @@ logoBanner: {
     width: 9,
     height: 5,
     borderRadius: 3,
-    backgroundColor: 'rgba(240,110,110,0.35)',
+    backgroundColor: withAlpha(colors.artRedSoft, 0.35),
   },
   pwMouth: {
     position: 'absolute',
@@ -1288,7 +1288,7 @@ logoBanner: {
     borderBottomRightRadius: 8,
     borderTopLeftRadius: 2,
     borderTopRightRadius: 2,
-    backgroundColor: '#7A1F2B',
+    backgroundColor: colors.artRed,
     overflow: 'hidden',
   },
   pwTongue: {
@@ -1298,16 +1298,16 @@ logoBanner: {
     width: 8,
     height: 6,
     borderRadius: 4,
-    backgroundColor: '#E8737F',
+    backgroundColor: colors.artRedLight,
   },
 
   // chef hat
   pwPuff: {
     position: 'absolute',
     borderRadius: 14,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.white,
     borderWidth: 1.5,
-    borderColor: '#D5DBD7',
+    borderColor: colors.neutral,
   },
   pwHatBand: {
     position: 'absolute',
@@ -1316,9 +1316,9 @@ logoBanner: {
     width: 46,
     height: 13,
     borderRadius: 4,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.white,
     borderWidth: 1.5,
-    borderColor: '#D5DBD7',
+    borderColor: colors.neutral,
   },
 
   // arm (wrapper is 2x arm length so rotation pivots at the elbow)
@@ -1344,9 +1344,9 @@ logoBanner: {
     width: 20,
     height: 7,
     borderRadius: 3,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.white,
     borderWidth: 1,
-    borderColor: '#D5DBD7',
+    borderColor: colors.neutral,
   },
   pwPalm: {
     position: 'absolute',
@@ -1355,13 +1355,13 @@ logoBanner: {
     width: 18,
     height: 18,
     borderRadius: 8,
-    backgroundColor: '#F6CFA8',
+    backgroundColor: colors.artSkinHighlight,
   },
   pwFinger: {
     position: 'absolute',
     width: 4,
     borderRadius: 2.5,
-    backgroundColor: '#F6CFA8',
+    backgroundColor: colors.artSkinHighlight,
   },
   pwThumb: {
     position: 'absolute',
@@ -1369,7 +1369,7 @@ logoBanner: {
     width: 5,
     height: 11,
     borderRadius: 3,
-    backgroundColor: '#F6CFA8',
+    backgroundColor: colors.artSkinHighlight,
   },
   // ----- #7 cloche reveal -----
 successOverlay: {
@@ -1386,7 +1386,7 @@ successOverlay: {
     width: 150,
     height: 10,
     borderRadius: 5,
-    backgroundColor: '#F3F5F4',
+    backgroundColor: colors.neutralSoft,
   },
   cloCheck: {
     position: 'absolute',
@@ -1400,13 +1400,13 @@ successOverlay: {
     justifyContent: 'center',
   },
   cloDome: { position: 'absolute', left: 9, top: 24, width: 132, height: 76, alignItems: 'center' },
-  cloKnob: { width: 14, height: 14, borderRadius: 7, backgroundColor: '#CFD6D3' },
+  cloKnob: { width: 14, height: 14, borderRadius: 7, backgroundColor: colors.neutral },
   cloTop: {
     width: 116,
     height: 54,
     borderTopLeftRadius: 58,
     borderTopRightRadius: 58,
-    backgroundColor: '#E8ECEA',
+    backgroundColor: colors.artNeutral,
     marginTop: -1,
   },
   cloShine: {
@@ -1416,18 +1416,18 @@ successOverlay: {
     width: 26,
     height: 6,
     borderRadius: 3,
-    backgroundColor: 'rgba(255,255,255,0.7)',
+    backgroundColor: withAlpha(colors.white, 0.7),
   },
-  cloRim: { width: 132, height: 8, borderRadius: 4, backgroundColor: '#CFD6D3' },
+  cloRim: { width: 132, height: 8, borderRadius: 4, backgroundColor: colors.neutral },
   successTitle: {
     fontFamily: 'Fraunces_600SemiBold',
     fontSize: 28,
-    color: '#FFFFFF',
+    color: colors.white,
   },
   successSub: {
     fontFamily: 'Inter_400Regular',
     fontSize: 14,
-    color: 'rgba(255,255,255,0.75)',
+    color: withAlpha(colors.white, 0.75),
     marginTop: 6,
   },
 });

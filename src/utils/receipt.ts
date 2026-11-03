@@ -9,22 +9,29 @@
 
 import { PlaceOrderResponse } from './kot';
 
-/** Characters per line: 58mm paper = 32, 80mm paper = 48. */
-export const PAPER_CHARS = 32;
+/** Approximate ESC/POS columns for common thermal roll widths. */
+export type PaperWidth = 2 | 3 | 4 | 5;
+export const PAPER_COLUMNS: Record<PaperWidth, number> = { 2: 32, 3: 48, 4: 64, 5: 80 };
+const DEFAULT_PAPER_WIDTH: PaperWidth = 2;
+const TOTAL_TAG = 'M';
+const TOTAL_SCALE = 1;
 
 /** What to print after an order: customer bill, kitchen slip, or both. */
 export type PrintMode = 'bill' | 'kot' | 'both';
 export const PRINT_MODE: PrintMode = 'bill';
+export type GstDisplayMode = 'single' | 'split';
 
 export interface FirmInfo {
   name?: string;
   place?: string;
+  gstNumber?: string;
+  phone?: string;
 }
 
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
-const rule = () => '-'.repeat(PAPER_CHARS);
+const rule = (width: PaperWidth) => '-'.repeat(PAPER_COLUMNS[width]);
 
 const money = (n: number | string | undefined | null): string => {
   const v = typeof n === 'number' ? n : parseFloat(n ?? '0');
@@ -32,17 +39,19 @@ const money = (n: number | string | undefined | null): string => {
 };
 
 /** left text + right text on one line, padded to the paper width */
-function leftRight(left: string, right: string): string {
-  const space = PAPER_CHARS - left.length - right.length;
+function leftRight(left: string, right: string, width: PaperWidth, scale = 1): string {
+  const columns = Math.floor(PAPER_COLUMNS[width] / scale);
+  const space = columns - left.length - right.length;
   if (space >= 1) return left + ' '.repeat(space) + right;
-  return left.slice(0, Math.max(0, PAPER_CHARS - right.length - 1)) + ' ' + right;
+  return left.slice(0, Math.max(0, columns - right.length - 1)) + ' ' + right;
 }
 
 /** break long text into paper-width lines */
-function wrap(text: string): string[] {
+function wrap(text: string, width: PaperWidth): string[] {
+  const columns = PAPER_COLUMNS[width];
   const out: string[] = [];
-  for (let i = 0; i < text.length; i += PAPER_CHARS) {
-    out.push(text.slice(i, i + PAPER_CHARS));
+  for (let i = 0; i < text.length; i += columns) {
+    out.push(text.slice(i, i + columns));
   }
   return out.length ? out : [''];
 }
@@ -60,7 +69,22 @@ const portionTag = (portion?: string): string =>
 // ---------------------------------------------------------------------------
 // Customer bill
 // ---------------------------------------------------------------------------
-export function buildBillText(res: PlaceOrderResponse, firm?: FirmInfo): string {
+export function buildBillText(res: PlaceOrderResponse, _firm?: FirmInfo, width: PaperWidth = DEFAULT_PAPER_WIDTH): string {
+  const o = res.order;
+  if (!o) return '';
+  const out: string[] = [];
+
+  out.push(`Bill no: ${res.billing?.bill_number ?? `SALE-${o.id}`}`);
+  out.push(rule(width));
+  o.order_items.forEach((it) => {
+    wrap(`${it.quantity} x ${it.name}${portionTag(it.portion)}`, width).forEach((line) => out.push(line));
+  });
+
+  return out.join('\n') + '\n\n\n'; // feed paper so the slip clears the cutter
+}
+
+/** Sales retain the detailed customer bill layout, separate from the current KOT slip. */
+export function buildSalesBillText(res: PlaceOrderResponse, firm?: FirmInfo, width: PaperWidth = DEFAULT_PAPER_WIDTH, paymentMethod: string = 'CASH', gstMode: GstDisplayMode = 'single'): string {
   const o = res.order;
   if (!o) return '';
   const b = res.billing;
@@ -68,50 +92,68 @@ export function buildBillText(res: PlaceOrderResponse, firm?: FirmInfo): string 
 
   if (firm?.name) out.push(`<C>${firm.name}</C>`);
   if (firm?.place) out.push(`<C>${firm.place}</C>`);
-  out.push(rule());
-  out.push(leftRight(`Bill: ${b?.bill_number ?? `KOT-${o.id}`}`, formatTime(o.order_time)));
-  out.push(`Table: ${o.table_number}${o.floor ? `   Floor: ${o.floor}` : ''}`);
+  if (firm?.gstNumber?.trim()) out.push(`<C>GSTIN: ${firm.gstNumber.trim()}</C>`);
+  if (firm?.phone?.trim()) out.push(`<C>Contact: ${firm.phone.trim()}</C>`);
+  out.push(rule(width));
+    out.push(leftRight(`Bill: ${b?.bill_number ?? `SALE-${o.id}`}`, formatTime(o.order_time), width));
+  out.push(`KOT: ${o.kot_number ?? b?.kot_number ?? b?.billing_id ?? o.billing_id ?? o.id}`);
+  out.push(leftRight(`Table: ${o.table_number}${o.floor ? `   Floor: ${o.floor}` : ''}`, paymentMethod, width));
   out.push(`Customer: ${o.customer_name}`);
-  out.push(rule());
+  out.push(`Customer Mobile: ${o.customer_phone?.trim() || b?.customer_phone?.trim() || 'Not provided'}`);
+  out.push(rule(width));
 
   o.order_items.forEach((it) => {
-    wrap(`${it.name}${portionTag(it.portion)}`).forEach((l) => out.push(l));
-    out.push(leftRight(`  ${it.quantity} x ${money(it.price)}`, money(it.item_total)));
+    out.push(...wrap(`${it.name}${portionTag(it.portion)}`, width));
+    out.push(leftRight(`  ${it.quantity} x ${money(it.price)}`, money(it.item_total), width));
   });
 
-  out.push(rule());
-  out.push(leftRight('Subtotal', money(o.subtotal)));
-  out.push(leftRight('Tax', money(o.tax_amount)));
-  out.push(leftRight('TOTAL', money(o.total_amount)));
-  out.push(rule());
+   out.push(rule(width));
+  out.push(leftRight('Subtotal', money(o.subtotal), width));
+  if (gstMode === 'split') {
+    const tax = Number(o.tax_amount) || 0;
+    const subtotal = Number(o.subtotal) || 0;
+    const halfRate = subtotal > 0 ? (tax / subtotal * 100) / 2 : 0;
+    const rate = Number.isInteger(halfRate) ? String(halfRate) : halfRate.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+    out.push(leftRight(`SGST ${rate}%`, money(tax / 2), width));
+    out.push(leftRight(`CGST ${rate}%`, money(tax - tax / 2), width));
+  } else {
+    out.push(leftRight('GST', money(o.tax_amount), width));
+  }
+    // TOTAL row: one size step smaller than before, padded for its real character width
+  out.push(`<${TOTAL_TAG}>${leftRight('TOTAL', money(o.total_amount), width, TOTAL_SCALE)}</${TOTAL_TAG}>`);
+  out.push(rule(width));
   out.push('<C>Thank you! Visit again</C>');
 
-  return out.join('\n') + '\n\n\n'; // feed paper so the slip clears the cutter
+  return out.join('\n') + '\n\n\n';
 }
 
 // ---------------------------------------------------------------------------
 // Kitchen slip (no prices)
 // ---------------------------------------------------------------------------
-export function buildKotText(res: PlaceOrderResponse): string {
+export function buildKotText(res: PlaceOrderResponse, width: PaperWidth = DEFAULT_PAPER_WIDTH, firm?: FirmInfo): string {
   const o = res.order;
   if (!o) return '';
   const out: string[] = [];
 
   out.push('<C>** KITCHEN ORDER **</C>');
-  out.push(rule());
-  out.push(leftRight(`KOT #${o.id}`, formatTime(o.order_time)));
+  if (firm?.gstNumber?.trim()) out.push(`<C>GSTIN: ${firm.gstNumber.trim()}</C>`);
+  if (firm?.phone?.trim()) out.push(`<C>Contact: ${firm.phone.trim()}</C>`);
+  out.push(rule(width));
+  out.push(leftRight(`KOT #${o.kot_number ?? res.billing?.kot_number ?? res.billing?.billing_id ?? o.billing_id ?? o.id}`, formatTime(o.order_time), width));
   out.push(`Table: ${o.table_number}${o.floor ? `   Floor: ${o.floor}` : ''}`);
-  out.push(rule());
+  out.push(`Customer: ${o.customer_name}`);
+  out.push(`Customer Mobile: ${o.customer_phone?.trim() || 'Not provided'}`);
+  out.push(rule(width));
 
   o.order_items.forEach((it) => {
-    wrap(`${it.quantity} x ${it.name}${portionTag(it.portion)}`).forEach((l) => out.push(l));
+    wrap(`${it.quantity} x ${it.name}${portionTag(it.portion)}`, width).forEach((l) => out.push(l));
   });
 
   if (o.special_instructions) {
-    out.push(rule());
-    wrap(`Note: ${o.special_instructions}`).forEach((l) => out.push(l));
+    out.push(rule(width));
+    wrap(`Note: ${o.special_instructions}`, width).forEach((l) => out.push(l));
   }
-  out.push(rule());
+  out.push(rule(width));
 
   return out.join('\n') + '\n\n\n';
 }

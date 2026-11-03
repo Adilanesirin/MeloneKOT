@@ -5,19 +5,20 @@
 // fades in last.
 
 import React, { useEffect, useRef } from 'react';
-import { View, Image, Text, StyleSheet, Animated, Easing, Dimensions } from 'react-native';
-import * as ExpoSplashScreen from 'expo-splash-screen';
+import { View, Image, Text, StyleSheet, Animated, Easing, useWindowDimensions } from 'react-native';
 import {
   useFonts,
   Fraunces_600SemiBold,
   Fraunces_600SemiBold_Italic,
 } from '@expo-google-fonts/fraunces';
+import {
+  Poppins_400Regular,
+  Poppins_500Medium,
+  Poppins_600SemiBold,
+  Poppins_700Bold,
+} from '@expo-google-fonts/poppins';
 
-import { colors } from '../constants/theme';
-
-ExpoSplashScreen.preventAutoHideAsync().catch(() => {});
-
-const { width: SCREEN_W } = Dimensions.get('window');
+import { colors, withAlpha } from '../constants/theme';
 
 // Swap this require if you rename the file — Metro needs a static path.
 const LOGO_WHITE = require('../../assets/Melone-white.png');
@@ -42,9 +43,15 @@ interface AnimatedSplashProps {
 }
 
 const AnimatedSplash: React.FC<AnimatedSplashProps> = ({ onFinish }) => {
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const logoWidth = Math.min(windowWidth * 0.92, 460);
   const [fontsLoaded] = useFonts({
     Fraunces_600SemiBold,
     Fraunces_600SemiBold_Italic,
+    Poppins_400Regular,
+    Poppins_500Medium,
+    Poppins_600SemiBold,
+    Poppins_700Bold,
   });
 
   const logoOpacity = useRef(new Animated.Value(0)).current;
@@ -58,8 +65,6 @@ const AnimatedSplash: React.FC<AnimatedSplashProps> = ({ onFinish }) => {
 
   useEffect(() => {
     if (!fontsLoaded) return;
-
-    ExpoSplashScreen.hideAsync().catch(() => {});
 
     const letterReveal = letterAnims.map((val) =>
       Animated.timing(val, {
@@ -120,6 +125,8 @@ const AnimatedSplash: React.FC<AnimatedSplashProps> = ({ onFinish }) => {
         style={[
           styles.logo,
           {
+            width: logoWidth,
+            height: Math.min(220, Math.max(130, windowHeight * 0.3)),
             opacity: logoOpacity,
             transform: [{ scale: logoScale }],
           },
@@ -183,8 +190,6 @@ const styles = StyleSheet.create({
   },
   logo: {
     // bigger stage — "contain" still preserves your PNG's real aspect ratio
-    width: Math.min(SCREEN_W * 0.92, 460),
-    height: 220,
   },
   underline: {
     height: 3,
@@ -208,7 +213,7 @@ const styles = StyleSheet.create({
   tagline: {
     fontFamily: 'Fraunces_600SemiBold',
     fontSize: 15,
-    color: 'rgba(255,255,255,0.9)',
+    color: withAlpha(colors.white, 0.9),
   },
   taglineAccent: {
     fontFamily: 'Fraunces_600SemiBold_Italic',
@@ -222,7 +227,7 @@ const styles = StyleSheet.create({
   footerText: {
     fontSize: 11,
     letterSpacing: 1.4,
-    color: 'rgba(255,255,255,0.55)',
+    color: withAlpha(colors.white, 0.55),
   },
   footerBrand: {
     color: colors.orange,

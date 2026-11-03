@@ -9,7 +9,7 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
-import { AuthUser, CartLine, LoginCredentials, StoredAuthToken } from '../utils/kot';
+import { AuthUser, CartLine, KotOrder, LoginCredentials, StoredAuthToken } from '../utils/kot';
 
 // ---------------------------------------------------------------------------
 // Keys
@@ -146,17 +146,19 @@ export async function clearRememberedCredentials(): Promise<void> {
 // Per-table cart (so switching tables or backgrounding the app doesn't lose
 // an order in progress)
 // ---------------------------------------------------------------------------
-export async function saveCartForTable(tableId: number, cart: CartLine[]): Promise<void> {
+type CartModule = 'kot' | 'sales';
+const cartKey = (tableId: number, module: CartModule = 'kot') => `${KEYS.CART_PREFIX}${module}_${tableId}`;
+export async function saveCartForTable(tableId: number, cart: CartLine[], module: CartModule = 'kot'): Promise<void> {
   try {
-    await AsyncStorage.setItem(KEYS.CART_PREFIX + tableId, JSON.stringify(cart));
+    await AsyncStorage.setItem(cartKey(tableId, module), JSON.stringify(cart));
   } catch (err) {
     console.warn('storage: failed to save cart', err);
   }
 }
 
-export async function getCartForTable(tableId: number): Promise<CartLine[]> {
+export async function getCartForTable(tableId: number, module: CartModule = 'kot'): Promise<CartLine[]> {
   try {
-    const raw = await AsyncStorage.getItem(KEYS.CART_PREFIX + tableId);
+    const raw = await AsyncStorage.getItem(cartKey(tableId, module));
     return raw ? (JSON.parse(raw) as CartLine[]) : [];
   } catch (err) {
     console.warn('storage: failed to read cart', err);
@@ -164,10 +166,57 @@ export async function getCartForTable(tableId: number): Promise<CartLine[]> {
   }
 }
 
-export async function clearCartForTable(tableId: number): Promise<void> {
+export async function clearCartForTable(tableId: number, module: CartModule = 'kot'): Promise<void> {
   try {
-    await AsyncStorage.removeItem(KEYS.CART_PREFIX + tableId);
+    await AsyncStorage.removeItem(cartKey(tableId, module));
   } catch (err) {
     console.warn('storage: failed to clear cart', err);
+  }
+}
+
+const openKotKey = (tableId: number) => `@melone_kot/open_kot_${tableId}`;
+
+/** Keep the active KOT on-device so Sales can show and carry it into the final bill. */
+export async function getOpenKotForTable(tableId: number): Promise<KotOrder | null> {
+  try {
+    const raw = await AsyncStorage.getItem(openKotKey(tableId));
+    return raw ? (JSON.parse(raw) as KotOrder) : null;
+  } catch (err) {
+    console.warn('storage: failed to read open KOT', err);
+    return null;
+  }
+}
+
+export async function saveOpenKotForTable(tableId: number, order: KotOrder, replace = false): Promise<void> {
+  try {
+    if (replace) {
+      // Server already merged the items; its order is the source of truth.
+      await AsyncStorage.setItem(openKotKey(tableId), JSON.stringify(order));
+      return;
+    }
+    const previous = await getOpenKotForTable(tableId);
+    const merged = new Map<string, KotOrder['order_items'][number]>();
+    [...(previous?.order_items ?? []), ...order.order_items].forEach((item) => {
+      const key = `${item.menu_item_id}_${String(item.portion || 'full').toLowerCase()}`;
+      const existing = merged.get(key);
+      merged.set(key, existing ? { ...existing, quantity: existing.quantity + item.quantity } : item);
+    });
+    const items = Array.from(merged.values());
+    await AsyncStorage.setItem(openKotKey(tableId), JSON.stringify({
+      ...order,
+      ...(previous ? { id: previous.id, order_time: previous.order_time } : {}),
+      order_items: items,
+      item_count: items.reduce((sum, item) => sum + item.quantity, 0),
+    }));
+  } catch (err) {
+    console.warn('storage: failed to save open KOT', err);
+  }
+}
+
+export async function clearOpenKotForTable(tableId: number): Promise<void> {
+  try {
+    await AsyncStorage.removeItem(openKotKey(tableId));
+  } catch (err) {
+    console.warn('storage: failed to clear open KOT', err);
   }
 }

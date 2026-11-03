@@ -32,6 +32,66 @@ export interface MenuItem {
   updated_at: string;
 }
 
+export type PortionLabel = 'full' | 'half' | 'quarter';
+
+export interface CartLine {
+  menuItemId: number;
+  name: string;
+  imageUrl: string;
+  unitPrice: number;
+  portionLabel: PortionLabel;
+  hasPortions: boolean;
+  quantity: number;
+}
+
+export interface AuthUser {
+  [key: string]: unknown;
+}
+
+export interface LoginCredentials {
+  clientId: string;
+  username: string;
+  password: string;
+}
+
+export interface StoredAuthToken {
+  token: string;
+  tokenType: string;
+  expiresAt: number;
+}
+
+export interface LoginResponse {
+  success: boolean;
+  message?: string;
+  user?: AuthUser;
+  token?: string;
+  token_type?: string;
+  expires_in?: number;
+  needs_credential_reset?: boolean;
+}
+
+export interface RestaurantTable {
+  id: number;
+  table_number: string;
+  table_name?: string | null;
+  floor?: string | null;
+  capacity: number;
+  /** True when at least one seat is occupied, even if the table is not full. */
+  occupied: boolean;
+  occupied_seats: number;
+  free_seats: number;
+  availability_status: 'free' | 'partial' | 'full' | string;
+  status: 'active' | 'inactive' | string;
+  color_code?: string | null;
+  is_ac: boolean;
+}
+
+export interface TablesResponse {
+  success: boolean;
+  tables: RestaurantTable[];
+  message?: string;
+}
+
 /** Envelope returned by GET /api/kot-items/ */
 export interface KotItemsResponse {
   success: boolean;
@@ -49,16 +109,19 @@ export interface KotItemsResponse {
 export interface PlaceOrderItemPayload {
   menu_item_id: number;
   quantity: number;
-  portion?: string; // 'full' | 'half' | 'quarter' — see note in the chat about backend support
+  portion?: string; // Omit for items sold at one price.
 }
 
 export interface PlaceOrderPayload {
-  customer_name: string; // required by the API ("Walk-in Guest" when blank)
-  table_number: string; // required
-  floor?: string; // sent so tables with the same number on different floors don't clash
-  items: PlaceOrderItemPayload[]; // required
-  customer_phone?: string; // optional, only sent when filled
-  special_instructions?: string; // optional, only sent when filled
+  customer_name: string;
+  waiter_name?: string;
+  kot_number?: string | number | null;
+  table_number: string;
+  floor?: string;
+  items: PlaceOrderItemPayload[];
+  customer_phone?: string;
+  special_instructions?: string;
+  payment_method?: string; // sales only
 }
 
 export interface KotOrderItem {
@@ -78,6 +141,11 @@ export interface KotOrderItem {
 
 export interface KotOrder {
   id: number;
+  kot_number?: string | number | null;
+  /** Billing ID for the open KOT, used to complete it as a sale. */
+  billing_id?: string;
+  /** Customer-facing bill number used by the pending-invoice conversion API. */
+  bill_number?: string;
   session_id: string;
   client_id: string;
   username: string;
@@ -103,8 +171,11 @@ export interface KotOrder {
 export interface KotBilling {
   billing_id: string;
   bill_number: string;
+  kot_number?: string | number | null;
+  waiter_name?: string | null;
   order_id: number;
   customer_name: string;
+  customer_phone?: string;
   table_number: string;
   subtotal: string;
   tax_amount: string;
@@ -118,6 +189,9 @@ export interface KotBilling {
 export interface PlaceOrderResponse {
   success: boolean;
   message?: string;
+  merged?: boolean;    // true = items were added to the table's existing KOT
+  appended?: number;
+  bumped?: number;
   order?: KotOrder;
   billing?: KotBilling;
 }

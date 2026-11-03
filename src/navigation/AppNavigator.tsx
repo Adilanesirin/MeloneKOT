@@ -1,10 +1,3 @@
-// src/navigation/AppNavigator.tsx
-// Root stack navigator for the KOT flow: Login -> Tables -> Menu (cart lives
-// inside MenuScreen as a slide-up drawer, not a separate route).
-//
-// Requires: npx expo install @react-navigation/native @react-navigation/native-stack
-// react-native-screens react-native-safe-area-context
-
 import React, { useEffect, useState } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import {
@@ -12,30 +5,56 @@ import {
   NativeStackScreenProps,
 } from '@react-navigation/native-stack';
 import { View, ActivityIndicator } from 'react-native';
+import NetInfo from '@react-native-community/netinfo';
 
 import LoginScreen from '../screens/LoginScreen';
 import TablesScreen from '../screens/TablesScreen';
 import MenuScreen from '../screens/MenuScreen';
+import SalesScreen from '../screens/SalesScreen';
+import SalesBillScreen from '../screens/SalesBillScreen';
+import ItemCreateScreen from '../screens/ItemCreateScreen';
+import CategoryCreateScreen from '../screens/CategoryCreateScreen';
+import TaxCreateScreen from '../screens/TaxCreateScreen';
+import TableMasterScreen from '../screens/TableMasterScreen';
+import PendingInvoiceScreen from '../screens/PendingInvoiceScreen';
+import KotReportScreen from '../screens/Kotreportscreen';
+import SalesReportScreen from '../screens/Salesreportscreen';
 import { getSession } from '../services/storage';
 import { colors } from '../constants/theme';
+import { syncOfflineOrders } from '../services/orderOutbox';
 
-// ---------------------------------------------------------------------------
-// Route params
-// ---------------------------------------------------------------------------
 export type RootStackParamList = {
   Login: undefined;
-  Tables: undefined;
+  Tables: { orderType?: 'kot' | 'sales'; finalizedTableId?: number } | undefined;
+  Sales: undefined;
+  SalesBill: { tableId: number; tableNumber: string; floor?: string };
   Menu: {
     tableId: number;
     tableNumber: string;
     floor?: string;
+    orderType?: 'kot' | 'sales';
   };
+  ItemCreate: undefined;
+  CategoryCreate: undefined;
+  TaxCreate: undefined;
+  TableMaster: undefined;
+  PendingInvoice: undefined;
+  KotReport: undefined;
+  SalesReport: undefined;
 };
 
 export type LoginScreenProps = NativeStackScreenProps<RootStackParamList, 'Login'>;
 export type TablesScreenProps = NativeStackScreenProps<RootStackParamList, 'Tables'>;
 export type MenuScreenProps = NativeStackScreenProps<RootStackParamList, 'Menu'>;
-
+export type SalesScreenProps = NativeStackScreenProps<RootStackParamList, 'Sales'>;
+export type SalesBillScreenProps = NativeStackScreenProps<RootStackParamList, 'SalesBill'>;
+export type ItemCreateScreenProps = NativeStackScreenProps<RootStackParamList, 'ItemCreate'>;
+export type CategoryCreateScreenProps = NativeStackScreenProps<RootStackParamList, 'CategoryCreate'>;
+export type TaxCreateScreenProps = NativeStackScreenProps<RootStackParamList, 'TaxCreate'>;
+export type TableMasterScreenProps = NativeStackScreenProps<RootStackParamList, 'TableMaster'>;
+export type PendingInvoiceScreenProps = NativeStackScreenProps<RootStackParamList, 'PendingInvoice'>;
+export type KotReportScreenProps = NativeStackScreenProps<RootStackParamList, 'KotReport'>;
+export type SalesReportScreenProps = NativeStackScreenProps<RootStackParamList, 'SalesReport'>;
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 // ---------------------------------------------------------------------------
@@ -51,6 +70,18 @@ const AppNavigator: React.FC = () => {
       setHasSession(!!session);
     })();
   }, []);
+
+  useEffect(() => {
+    if (!hasSession) return;
+    const syncIfOnline = (state: { isConnected: boolean | null; isInternetReachable: boolean | null }) => {
+      if (state.isConnected === true && state.isInternetReachable !== false) {
+        void syncOfflineOrders();
+      }
+    };
+    const unsubscribe = NetInfo.addEventListener(syncIfOnline);
+    NetInfo.fetch().then(syncIfOnline).catch(() => {});
+    return unsubscribe;
+  }, [hasSession]);
 
   if (hasSession === null) {
     // brief splash while AsyncStorage is checked, so a returning user
@@ -73,7 +104,16 @@ const AppNavigator: React.FC = () => {
       >
         <Stack.Screen name="Login" component={LoginScreen} />
         <Stack.Screen name="Tables" component={TablesScreen} />
+        <Stack.Screen name="Sales" component={SalesScreen} />
+        <Stack.Screen name="SalesBill" component={SalesBillScreen} />
         <Stack.Screen name="Menu" component={MenuScreen} />
+        <Stack.Screen name="ItemCreate" component={ItemCreateScreen} />
+        <Stack.Screen name="CategoryCreate" component={CategoryCreateScreen} />
+        <Stack.Screen name="TaxCreate" component={TaxCreateScreen} />
+        <Stack.Screen name="TableMaster" component={TableMasterScreen} />
+        <Stack.Screen name="PendingInvoice" component={PendingInvoiceScreen} />
+        <Stack.Screen name="KotReport" component={KotReportScreen} />
+        <Stack.Screen name="SalesReport" component={SalesReportScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

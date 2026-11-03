@@ -1,17 +1,57 @@
 
 import { Platform, PermissionsAndroid } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { BLEPrinter } from 'react-native-thermal-receipt-printer'; // LIB
+import { getBLEPrinter } from './nativeModules'; // adjust the path to where you saved it
 
 import { PlaceOrderResponse } from '../utils/kot';
-import { buildBillText, buildKotText, PRINT_MODE, FirmInfo } from '../utils/receipt';
+import { buildKotText, buildSalesBillText, FirmInfo, GstDisplayMode, PaperWidth } from '../utils/receipt';
+import { getCompanyInfo } from '../services/api';
 
 const PRINTER_KEY = '@melone_kot/printer';
+const SALES_BILL_PRINTING_KEY = '@melone_kot/print_sales_bill';
+const GST_DISPLAY_KEY = '@melone_kot/gst_display_mode';
 const PRINT_TIMEOUT_MS = 10000;
+
+export type SalesPrintMode = 'kot' | 'sales' | 'both';
+
+export async function getSalesPrintMode(): Promise<SalesPrintMode> {
+  try {
+    const saved = await AsyncStorage.getItem(SALES_BILL_PRINTING_KEY);
+    if (saved === 'kot' || saved === 'sales' || saved === 'both') return saved;
+    // Migrate the previous on/off setting: on printed KOT + bill; off printed KOT.
+    return saved === 'false' ? 'kot' : 'both';
+  } catch { return 'both'; }
+}
+export async function setSalesPrintMode(mode: SalesPrintMode): Promise<void> {
+  await AsyncStorage.setItem(SALES_BILL_PRINTING_KEY, mode);
+}
+
+export async function getGstDisplayMode(): Promise<GstDisplayMode> {
+  try { return (await AsyncStorage.getItem(GST_DISPLAY_KEY)) === 'split' ? 'split' : 'single'; }
+  catch { return 'single'; }
+}
+
+export async function setGstDisplayMode(mode: GstDisplayMode): Promise<void> {
+  await AsyncStorage.setItem(GST_DISPLAY_KEY, mode);
+}
 
 export interface SavedPrinter {
   name: string;
   address: string; // Bluetooth MAC address
+  paperWidth?: PaperWidth;
+}
+
+const DEFAULT_PAPER_WIDTH: PaperWidth = 2;
+
+export async function getPaperWidth(): Promise<PaperWidth> {
+  const printer = await getSavedPrinter();
+  const width = printer?.paperWidth;
+  return width === 3 || width === 4 || width === 5 ? width : DEFAULT_PAPER_WIDTH;
+}
+
+export async function savePaperWidth(paperWidth: PaperWidth): Promise<void> {
+  const printer = await getSavedPrinter();
+  if (printer) await savePrinter({ ...printer, paperWidth });
 }
 
 export type PrintResult =
@@ -63,9 +103,11 @@ async function ensurePermission(): Promise<boolean> {
 // Paired printers (for the picker)
 // ---------------------------------------------------------------------------
 export async function listPairedPrinters(): Promise<SavedPrinter[]> {
-  if (!(await ensurePermission())) throw new Error('Bluetooth permission was denied.');
-  await BLEPrinter.init(); // LIB
-  const devices = await BLEPrinter.getDeviceList(); // LIB
+    if (!(await ensurePermission())) throw new Error('Bluetooth permission was denied.');
+  const BLEPrinter = getBLEPrinter();
+  if (!BLEPrinter) throw new Error('Printing needs a development build (not available in Expo Go).');
+  await BLEPrinter.init();
+  const devices = await BLEPrinter.getDeviceList();
   return devices.map((d: { device_name: string; inner_mac_address: string }) => ({
     name: d.device_name || d.inner_mac_address,
     address: d.inner_mac_address,
@@ -104,12 +146,18 @@ async function sendText(text: string): Promise<PrintResult> {
   if (!(await ensurePermission())) {
     return { ok: false, reason: 'permission', message: 'Bluetooth permission was denied.' };
   }
+    const BLEPrinter = getBLEPrinter();
+  if (!BLEPrinter) {
+    return { ok: false, reason: 'error', message: 'Printing needs a development build (not available in Expo Go).' };
+  }
   try {
     await withTimeout(
       (async () => {
-        await BLEPrinter.init(); // LIB
-        await BLEPrinter.connectPrinter(printer.address); // LIB
-        BLEPrinter.printText(text); // LIB  (try printBill(text) if your printer has an auto-cutter)
+        await BLEPrinter.init();
+        await BLEPrinter.connectPrinter(printer.address);
+        // printBill includes the end-of-receipt feed/cut sequence. printText
+        // can leave short jobs buffered on some ESC/POS printers.
+        await Promise.resolve(BLEPrinter.printBill(text));
       })(),
       PRINT_TIMEOUT_MS
     );
@@ -126,25 +174,60 @@ async function sendText(text: string): Promise<PrintResult> {
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
-/** Prints the slip(s) for a placed order (see PRINT_MODE in utils/receipt.ts). */
+/** A KOT order always prints its kitchen slip. */
 export function printOrderReceipt(res: PlaceOrderResponse, firm?: FirmInfo): Promise<PrintResult> {
   return enqueue(async () => {
     if (!res.order) return { ok: false, reason: 'error', message: 'No order to print.' } as PrintResult;
+    const width = await getPaperWidth();
+    const billFirm = await getReceiptFirm(firm);
+    return sendText(buildKotText(res, width, billFirm));
+  });
+}
 
-    if (PRINT_MODE !== 'bill') {
-      const kot = await sendText(buildKotText(res));
-      if (!kot.ok) return kot;
+let companyCache: { at: number; value: Awaited<ReturnType<typeof getCompanyInfo>> } | null = null;
+
+async function getReceiptFirm(firm?: FirmInfo): Promise<FirmInfo> {
+  try {
+    if (!companyCache || Date.now() - companyCache.at > 30 * 60 * 1000) {
+      companyCache = { at: Date.now(), value: await getCompanyInfo() };
     }
-    if (PRINT_MODE !== 'kot') {
-      return sendText(buildBillText(res, firm));
-    }
-    return { ok: true } as PrintResult;
+    const company = companyCache.value;
+    return {
+      ...firm,
+      name: company?.firm_name || firm?.name,
+      place: company?.place || firm?.place,
+      gstNumber: company?.gst_number || firm?.gstNumber,
+      phone: company?.phone || company?.whatsapp || firm?.phone,
+    };
+  } catch (err) {
+    console.warn('printer: could not load company details for receipt', err);
+    return firm ?? {};
+  }
+}
+
+/** Prints the selected receipt(s) when a sale is saved. */
+export function printSalesReceipt(res: PlaceOrderResponse, firm?: FirmInfo, paymentMethod: string = 'CASH'): Promise<PrintResult> {
+  return enqueue(async () => {
+    if (!res.order) return { ok: false, reason: 'error', message: 'No order to print.' } as PrintResult;
+    const width = await getPaperWidth();
+    const mode = await getSalesPrintMode();
+    const gstMode = await getGstDisplayMode();
+    const billFirm = await getReceiptFirm(firm);
+    if (mode === 'kot') return sendText(buildKotText(res, width, billFirm));
+    if (mode === 'sales') return sendText(buildSalesBillText(res, billFirm, width, paymentMethod, gstMode));
+    const kot = await sendText(buildKotText(res, width, billFirm));
+    if (!kot.ok) return kot;
+    return sendText(buildSalesBillText(res, billFirm, width, paymentMethod, gstMode));
   });
 }
 
 /** Short test slip for the printer picker. */
 export function printTestPage(): Promise<PrintResult> {
-  return enqueue(() =>
-    sendText('<C>Melone KOT</C>\n<C>Printer test OK</C>\n--------------------------------\n\n\n')
-  );
+  return enqueue(async () => {
+    const width = await getPaperWidth();
+    const columns = { 2: 32, 3: 48, 4: 64, 5: 80 }[width];
+    return sendText(`<C>Melone KOT</C>\n<C>Printer test OK</C>\n${'-'.repeat(columns)}\n\n\n`);
+  });
 }
+
+
